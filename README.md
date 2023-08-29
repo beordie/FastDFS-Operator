@@ -1,0 +1,2 @@
+# FastDFS-Operator
+fastdfs operator
