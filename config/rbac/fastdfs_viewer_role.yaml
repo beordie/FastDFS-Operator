@@ -1,0 +1,27 @@
+# permissions for end users to view fastdfs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: clusterrole
+    app.kubernetes.io/instance: fastdfs-viewer-role
+    app.kubernetes.io/component: rbac
+    app.kubernetes.io/created-by: fastdfs
+    app.kubernetes.io/part-of: fastdfs
+    app.kubernetes.io/managed-by: kustomize
+  name: fastdfs-viewer-role
+rules:
+- apiGroups:
+  - fastdfs.beordie.cn
+  resources:
+  - fastdfs
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - fastdfs.beordie.cn
+  resources:
+  - fastdfs/status
+  verbs:
+  - get

@@ -1,0 +1,32 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - fastdfs.beordie.cn
+  resources:
+  - fastdfs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - fastdfs.beordie.cn
+  resources:
+  - fastdfs/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - fastdfs.beordie.cn
+  resources:
+  - fastdfs/status
+  verbs:
+  - get
+  - patch
+  - update

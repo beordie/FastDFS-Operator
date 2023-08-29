@@ -1,0 +1,4 @@
+## Append samples of your project ##
+resources:
+- fastdfs_v1_fastdfs.yaml
+#+kubebuilder:scaffold:manifestskustomizesamples

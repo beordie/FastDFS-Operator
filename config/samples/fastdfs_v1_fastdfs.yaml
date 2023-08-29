@@ -1,0 +1,12 @@
+apiVersion: fastdfs.beordie.cn/v1
+kind: FastDFS
+metadata:
+  labels:
+    app.kubernetes.io/name: fastdfs
+    app.kubernetes.io/instance: fastdfs-sample
+    app.kubernetes.io/part-of: fastdfs
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: fastdfs
+  name: fastdfs-sample
+spec:
+  # TODO(user): Add fields here
