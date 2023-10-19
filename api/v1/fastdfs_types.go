@@ -17,8 +17,12 @@ limitations under the License.
 package v1
 
 import (
+	"fmt"
+
+	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
@@ -74,6 +78,11 @@ type FastDFSSpec struct {
 	// +optional
 	Paused bool `json:"paused,omitempty"`
 
+	// Storage specifies storage options
+	//
+	// +required
+	Storage *StorageOption `json:"storage,omitempty"`
+
 	// Labels specifies the labels that will be tagged
 	// on all resources created by FastDFSCluster
 	//
@@ -107,6 +116,21 @@ type FastDFSStatus struct {
 	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 
+	// Information when was the last time the cr was successfully scheduled.
+	// +optional
+	LastScheduleTime *metav1.Time `json:"lastScheduleTime,omitempty"`
+
+	// Replicas is the number of replicas created in the cluster
+	Replicas int32 `json:"replicas"`
+
+	// CurrentStatefulSetReplicas is the number of statefulset replicas
+	CurrentStatefulSetReplicas int32 `json:"currentStatefulSetReplicas"`
+
+	// ObserverReplicas is the number of observer replicas created in the cluster
+	ObserverReplicas int32 `json:"observerReplicas"`
+
+	// ParticipantReplicas is the number of participant replicas created in the cluster
+	ParticipantReplicas int32 `json:"participantReplicas"`
 }
 
 //+kubebuilder:object:root=true
@@ -184,6 +208,107 @@ type ServerAuth struct {
 	//
 	// +optional
 	FailFallBack string `json:"failFallBack,omitempty"`
+}
+
+func (cluster FastDFS) Fields() logrus.Fields {
+	return logrus.Fields{
+		"clusterName": cluster.Name,
+		"namespace":   cluster.Namespace,
+	}
+}
+
+/**
+ * GetStatefulSetName is the name of the cluster statefulset
+ *
+ * @return string
+ */
+func (cluster *FastDFS) GetStatefulSetName() string {
+	return fmt.Sprintf(StatefulsetName, cluster.Name)
+}
+
+/**
+ * GetStatefulSetNamespacedName is the namespaced and name of the statefulset
+ *
+ * @return types.NamespacedName
+ */
+func (cluster *FastDFS) GetStatefulSetNamespacedName() types.NamespacedName {
+	return types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.GetStatefulSetName()}
+}
+
+/**
+ * ResourceMatchingLabels is the labels that will be tagged
+ * on all resources created by FastDFSCluster
+ *
+ * @return map[string]string
+ */
+func (cluster *FastDFS) ResourceMatchingLabels() map[string]string {
+	return map[string]string{
+		"clusterId": string(cluster.UID),
+	}
+}
+
+/**
+ * ResourceLabels is the labels that will be tagged
+ * on all resources created by FastDFSCluster
+ *
+ * @return map[string]string
+ */
+func (cluster *FastDFS) ResourceLabels() map[string]string {
+	labels := map[string]string{}
+	for k, v := range cluster.Spec.Labels {
+		labels[k] = v
+	}
+
+	// separate resources from different cluster
+	for k, v := range cluster.ResourceMatchingLabels() {
+		labels[k] = v
+	}
+	return labels
+}
+
+/**
+ * HeadlessServiceName is the name of the headless service for the FastDFS cluster
+ * - headless service name: <cluster-name>-headless
+ * statefulset need a unique service tag to expose net
+ * @return string
+ */
+func (cluster *FastDFS) GetHeadlessServiceName() string {
+	return fmt.Sprintf(HeadlessServiceName, cluster.Name)
+}
+
+type VolumeReclaimPolicy string
+
+const (
+	VolumeReclaimPolicyRetain VolumeReclaimPolicy = "Retain"
+	VolumeReclaimPolicyDelete VolumeReclaimPolicy = "Delete"
+)
+
+type StorageOption struct {
+	// DiskSize specifies the storage size of pod
+	// unit Gi
+	//
+	// +required
+	// +kubebuilder:validation:Minimum=1
+	DiskSize int32 `json:"diskSize,omitempty"`
+
+	// Unit specifies the unit of DiskSize, default Gi
+	//
+	// +optional
+	// +kubebuilder:validation:Enum=Mi;Gi
+	Unit string `json:"unit,omitempty"`
+
+	// StorageClass specifies storageclass used by pvc
+	//
+	// +optional
+	StorageClass *string `json:"storageClass,omitempty"`
+
+	// VolumeReclaimPolicy is a zookeeper operator configuration. If it's set to Delete,
+	// the corresponding PVCs will be deleted by the operator when zookeeper cluster is deleted.
+	// The default value is Retain.
+	//
+	// +optional
+	// +kubebuilder:validation:Enum="Delete";"Retain"
+	VolumeReclaimPolicy VolumeReclaimPolicy `json:"reclaimPolicy,omitempty"`
 }
 
 func init() {

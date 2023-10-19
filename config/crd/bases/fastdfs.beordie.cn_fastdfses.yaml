@@ -977,6 +977,27 @@ spec:
                 format: int32
                 minimum: 0
                 type: integer
+              serverAuth:
+                description: server auth is used to authenticate servers
+                properties:
+                  failFallBack:
+                    description: return the content of the file when check token fail
+                      default value is empty (no file sepecified)
+                    type: string
+                  secret:
+                    description: secret key to generate anti-steal token this parameter
+                      must be set when http.anti_steal.check_token set to true the
+                      length of the secret key should not exceed 128 bytes
+                    type: string
+                  token:
+                    description: disabled auth default false
+                    type: string
+                  ttl:
+                    description: token TTL (time to live), seconds default value is
+                      600
+                    format: int32
+                    type: integer
+                type: object
               tolerations:
                 description: Tolerations enable pod to schedule on node that have
                   taints on, normally combine it with Affinity when deploy a schedule
@@ -1027,6 +1048,12 @@ spec:
             type: object
           status:
             description: FastDFSStatus defines the observed state of FastDFS
+            properties:
+              lastScheduleTime:
+                description: Information when was the last time the cr was successfully
+                  scheduled.
+                format: date-time
+                type: string
             type: object
         type: object
     served: true

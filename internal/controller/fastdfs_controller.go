@@ -18,19 +18,36 @@ package controller
 
 import (
 	"context"
+	"time"
 
+	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	fastdfsv1 "fastdfs_operator/api/v1"
+	v1 "fastdfs_operator/api/v1"
+
+	"github.com/fearlesschenc/operator-utils/pkg/reconcile"
+
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 )
 
 // FastDFSReconciler reconciles a FastDFS object
 type FastDFSReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
+	Log      *logrus.Logger
+	Recorder record.EventRecorder
+	Scheme   *runtime.Scheme
+}
+
+func (r *FastDFSReconciler) GetReconcileSteps() []reconcile.Func {
+	return reconcile.Funcs{
+		r.ReconcileStatefulSet,
+	}
 }
 
 //+kubebuilder:rbac:groups=fastdfs.beordie.cn,resources=fastdfs,verbs=get;list;watch;create;update;patch;delete
@@ -46,17 +63,43 @@ type FastDFSReconciler struct {
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.15.0/pkg/reconcile
-func (r *FastDFSReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+func (r *FastDFSReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
 	_ = log.FromContext(ctx)
 
 	// TODO(user): your logic here
+	r.Log.WithFields(logrus.Fields{"namespace": request.Namespace, "clusterName": request.Name}).Info("Reconciling FastDFS started")
+	cluster := &v1.FastDFS{}
+	if err := r.Get(context.Background(), request.NamespacedName, cluster); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
 
-	return ctrl.Result{}, nil
+	if ShouldReconcile(cluster) {
+		result, err := reconcile.Reconcile(ctx, cluster).WithReconciler(r)
+		if result.RequeueRequest {
+			return reconcile.RequeueRequestAfter(result.RequeueDelay, err)
+		}
+		if result.CancelReconciliation {
+			return reconcile.DoNotRequeueRequest(err)
+		}
+	}
+
+	return RequeueRequestAfter(time.Second*10, nil)
+}
+
+func (r *FastDFSReconciler) Eventf(cluster *v1.FastDFS, eventType, reason, message string) {
+	r.Recorder.AnnotatedEventf(cluster, map[string]string{
+		"cloud.netease.com/app":          "fastDFS",
+		"cloud.netease.com/cluster-name": cluster.Name,
+	}, eventType, reason, message)
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *FastDFSReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&fastdfsv1.FastDFS{}).
+		Owns(&corev1.ConfigMap{}).
+		Owns(&appsv1.StatefulSet{}).
+		Owns(&corev1.Pod{}).
+		Owns(&corev1.Service{}).
 		Complete(r)
 }
