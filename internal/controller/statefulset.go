@@ -17,19 +17,19 @@ import (
 
 func (r *FastDFSReconciler) ReconcileStatefulSet(ctx context.Context, object metav1.Object) (reconcile.Result, error) {
 	cluster, _ := object.(*v1.FastDFS)
-	r.Log.WithFields(cluster.Fields()).Info("reconcile cluster statefulset")
+	r.Log.Info("reconcile cluster statefulset")
 
 	sts := r.makeStatefulSet(cluster)
 	if result, err := controllerutil.CreateOrUpdate(ctx, r.Client, sts, func() error {
 		err := r.mutateStatefulSet(cluster, sts)
 		if err != nil {
-			r.Log.WithFields(cluster.Fields()).Error(err, "failed to mutate statefulset")
+			r.Log.Error(err, "failed to mutate statefulset")
 			return err
 		}
 
 		pvcBeingDeleted, err := r.isPVCBeingDeleted(ctx, cluster, *sts.Spec.Replicas)
 		if err != nil {
-			r.Log.WithFields(cluster.Fields()).Error(err, "failed to check if pvc is being deleted")
+			r.Log.Error(err, "failed to check if pvc is being deleted")
 			return err
 		}
 
@@ -45,10 +45,10 @@ func (r *FastDFSReconciler) ReconcileStatefulSet(ctx context.Context, object met
 	} else {
 		switch result {
 		case controllerutil.OperationResultCreated:
-			r.Log.WithFields(cluster.Fields()).Info("created statefulset")
+			r.Log.Info("created statefulset")
 			r.Eventf(cluster, corev1.EventTypeNormal, "StatefulSetCreated", "created fastdfs statefulset")
 		case controllerutil.OperationResultUpdated:
-			r.Log.WithFields(cluster.Fields()).Info("updated statefulset")
+			r.Log.Info("updated statefulset")
 			r.Eventf(cluster, corev1.EventTypeNormal, "StatefulSetUpdated", "updated fastdfs statefulset")
 
 			_ = wait.Poll(time.Second, time.Second*30, func() (done bool, err error) {

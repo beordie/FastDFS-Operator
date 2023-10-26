@@ -20,11 +20,12 @@ import (
 	"context"
 	"time"
 
-	"github.com/sirupsen/logrus"
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	fastdfsv1 "fastdfs_operator/api/v1"
@@ -39,7 +40,7 @@ import (
 // FastDFSReconciler reconciles a FastDFS object
 type FastDFSReconciler struct {
 	client.Client
-	Log      *logrus.Logger
+	Log      logr.Logger
 	Recorder record.EventRecorder
 	Scheme   *runtime.Scheme
 }
@@ -67,7 +68,7 @@ func (r *FastDFSReconciler) Reconcile(ctx context.Context, request ctrl.Request)
 	_ = log.FromContext(ctx)
 
 	// TODO(user): your logic here
-	r.Log.WithFields(logrus.Fields{"namespace": request.Namespace, "clusterName": request.Name}).Info("Reconciling FastDFS started")
+	r.Log.Info("Reconciling FastDFS started")
 	cluster := &v1.FastDFS{}
 	if err := r.Get(context.Background(), request.NamespacedName, cluster); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
@@ -96,6 +97,7 @@ func (r *FastDFSReconciler) Eventf(cluster *v1.FastDFS, eventType, reason, messa
 // SetupWithManager sets up the controller with the Manager.
 func (r *FastDFSReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
+		WithOptions(controller.Options{MaxConcurrentReconciles: 5}).
 		For(&fastdfsv1.FastDFS{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&appsv1.StatefulSet{}).

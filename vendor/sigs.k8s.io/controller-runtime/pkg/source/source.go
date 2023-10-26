@@ -18,18 +18,24 @@ package source
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/client-go/util/workqueue"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	internal "sigs.k8s.io/controller-runtime/pkg/internal/source"
+	logf "sigs.k8s.io/controller-runtime/pkg/internal/log"
+	"sigs.k8s.io/controller-runtime/pkg/runtime/inject"
+	"sigs.k8s.io/controller-runtime/pkg/source/internal"
 
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
+
+var log = logf.RuntimeLog.WithName("source")
 
 const (
 	// defaultBufferSize is the default number of event notifications that can be buffered.
@@ -43,7 +49,8 @@ const (
 //
 // * Use Channel for events originating outside the cluster (eh.g. GitHub Webhook callback, Polling external urls).
 //
-// Users may build their own Source implementations.
+// Users may build their own Source implementations.  If their implementations implement any of the inject package
+// interfaces, the dependencies will be injected by the Controller when Watch is called.
 type Source interface {
 	// Start is internal and should be called only by the Controller to register an EventHandler with the Informer
 	// to enqueue reconcile.Requests.
@@ -57,9 +64,91 @@ type SyncingSource interface {
 	WaitForSync(ctx context.Context) error
 }
 
-// Kind creates a KindSource with the given cache provider.
-func Kind(cache cache.Cache, object client.Object) SyncingSource {
-	return &internal.Kind{Type: object, Cache: cache}
+// NewKindWithCache creates a Source without InjectCache, so that it is assured that the given cache is used
+// and not overwritten. It can be used to watch objects in a different cluster by passing the cache
+// from that other cluster
+func NewKindWithCache(object client.Object, cache cache.Cache) SyncingSource {
+	return &kindWithCache{kind: Kind{Type: object, cache: cache}}
+}
+
+type kindWithCache struct {
+	kind Kind
+}
+
+func (ks *kindWithCache) Start(ctx context.Context, handler handler.EventHandler, queue workqueue.RateLimitingInterface,
+	prct ...predicate.Predicate) error {
+	return ks.kind.Start(ctx, handler, queue, prct...)
+}
+
+func (ks *kindWithCache) WaitForSync(ctx context.Context) error {
+	return ks.kind.WaitForSync(ctx)
+}
+
+// Kind is used to provide a source of events originating inside the cluster from Watches (e.g. Pod Create)
+type Kind struct {
+	// Type is the type of object to watch.  e.g. &v1.Pod{}
+	Type client.Object
+
+	// cache used to watch APIs
+	cache cache.Cache
+}
+
+var _ SyncingSource = &Kind{}
+
+// Start is internal and should be called only by the Controller to register an EventHandler with the Informer
+// to enqueue reconcile.Requests.
+func (ks *Kind) Start(ctx context.Context, handler handler.EventHandler, queue workqueue.RateLimitingInterface,
+	prct ...predicate.Predicate) error {
+
+	// Type should have been specified by the user.
+	if ks.Type == nil {
+		return fmt.Errorf("must specify Kind.Type")
+	}
+
+	// cache should have been injected before Start was called
+	if ks.cache == nil {
+		return fmt.Errorf("must call CacheInto on Kind before calling Start")
+	}
+
+	// Lookup the Informer from the Cache and add an EventHandler which populates the Queue
+	i, err := ks.cache.GetInformer(ctx, ks.Type)
+	if err != nil {
+		if kindMatchErr, ok := err.(*meta.NoKindMatchError); ok {
+			log.Error(err, "if kind is a CRD, it should be installed before calling Start",
+				"kind", kindMatchErr.GroupKind)
+		}
+		return err
+	}
+	i.AddEventHandler(internal.EventHandler{Queue: queue, EventHandler: handler, Predicates: prct})
+	return nil
+}
+
+func (ks *Kind) String() string {
+	if ks.Type != nil && ks.Type.GetObjectKind() != nil {
+		return fmt.Sprintf("kind source: %v", ks.Type.GetObjectKind().GroupVersionKind().String())
+	}
+	return fmt.Sprintf("kind source: unknown GVK")
+}
+
+// WaitForSync implements SyncingSource to allow controllers to wait with starting
+// workers until the cache is synced.
+func (ks *Kind) WaitForSync(ctx context.Context) error {
+	if !ks.cache.WaitForCacheSync(ctx) {
+		// Would be great to return something more informative here
+		return errors.New("cache did not sync")
+	}
+	return nil
+}
+
+var _ inject.Cache = &Kind{}
+
+// InjectCache is internal should be called only by the Controller.  InjectCache is used to inject
+// the Cache dependency initialized by the ControllerManager.
+func (ks *Kind) InjectCache(c cache.Cache) error {
+	if ks.cache == nil {
+		ks.cache = c
+	}
+	return nil
 }
 
 var _ Source = &Channel{}
@@ -73,6 +162,9 @@ type Channel struct {
 
 	// Source is the source channel to fetch GenericEvents
 	Source <-chan event.GenericEvent
+
+	// stop is to end ongoing goroutine, and close the channels
+	stop <-chan struct{}
 
 	// dest is the destination channels of the added event handlers
 	dest []chan event.GenericEvent
@@ -89,6 +181,18 @@ func (cs *Channel) String() string {
 	return fmt.Sprintf("channel source: %p", cs)
 }
 
+var _ inject.Stoppable = &Channel{}
+
+// InjectStopChannel is internal should be called only by the Controller.
+// It is used to inject the stop channel initialized by the ControllerManager.
+func (cs *Channel) InjectStopChannel(stop <-chan struct{}) error {
+	if cs.stop == nil {
+		cs.stop = stop
+	}
+
+	return nil
+}
+
 // Start implements Source and should only be called by the Controller.
 func (cs *Channel) Start(
 	ctx context.Context,
@@ -100,16 +204,18 @@ func (cs *Channel) Start(
 		return fmt.Errorf("must specify Channel.Source")
 	}
 
+	// stop should have been injected before Start was called
+	if cs.stop == nil {
+		return fmt.Errorf("must call InjectStop on Channel before calling Start")
+	}
+
 	// use default value if DestBufferSize not specified
 	if cs.DestBufferSize == 0 {
 		cs.DestBufferSize = defaultBufferSize
 	}
 
 	dst := make(chan event.GenericEvent, cs.DestBufferSize)
-
-	cs.destLock.Lock()
 	cs.dest = append(cs.dest, dst)
-	cs.destLock.Unlock()
 
 	cs.once.Do(func() {
 		// Distribute GenericEvents to all EventHandler / Queue pairs Watching this source
@@ -127,14 +233,13 @@ func (cs *Channel) Start(
 			}
 
 			if shouldHandle {
-				func() {
-					ctx, cancel := context.WithCancel(ctx)
-					defer cancel()
-					handler.Generic(ctx, evt, queue)
-				}()
+				handler.Generic(evt, queue)
 			}
 		}
 	}()
+
+	cs.destLock.Lock()
+	defer cs.destLock.Unlock()
 
 	return nil
 }
@@ -169,19 +274,13 @@ func (cs *Channel) syncLoop(ctx context.Context) {
 			// Close destination channels
 			cs.doStop()
 			return
-		case evt, stillOpen := <-cs.Source:
-			if !stillOpen {
-				// if the source channel is closed, we're never gonna get
-				// anything more on it, so stop & bail
-				cs.doStop()
-				return
-			}
+		case evt := <-cs.Source:
 			cs.distribute(evt)
 		}
 	}
 }
 
-// Informer is used to provide a source of events originating inside the cluster from Watches (e.g. Pod Create).
+// Informer is used to provide a source of events originating inside the cluster from Watches (e.g. Pod Create)
 type Informer struct {
 	// Informer is the controller-runtime Informer
 	Informer cache.Informer
@@ -193,15 +292,13 @@ var _ Source = &Informer{}
 // to enqueue reconcile.Requests.
 func (is *Informer) Start(ctx context.Context, handler handler.EventHandler, queue workqueue.RateLimitingInterface,
 	prct ...predicate.Predicate) error {
+
 	// Informer should have been specified by the user.
 	if is.Informer == nil {
 		return fmt.Errorf("must specify Informer.Informer")
 	}
 
-	_, err := is.Informer.AddEventHandler(internal.NewEventHandler(ctx, queue, handler, prct).HandlerFuncs())
-	if err != nil {
-		return err
-	}
+	is.Informer.AddEventHandler(internal.EventHandler{Queue: queue, EventHandler: handler, Predicates: prct})
 	return nil
 }
 
@@ -211,10 +308,10 @@ func (is *Informer) String() string {
 
 var _ Source = Func(nil)
 
-// Func is a function that implements Source.
+// Func is a function that implements Source
 type Func func(context.Context, handler.EventHandler, workqueue.RateLimitingInterface, ...predicate.Predicate) error
 
-// Start implements Source.
+// Start implements Source
 func (f Func) Start(ctx context.Context, evt handler.EventHandler, queue workqueue.RateLimitingInterface,
 	pr ...predicate.Predicate) error {
 	return f(ctx, evt, queue, pr...)

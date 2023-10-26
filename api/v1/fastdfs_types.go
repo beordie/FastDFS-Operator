@@ -19,7 +19,6 @@ package v1
 import (
 	"fmt"
 
-	"github.com/sirupsen/logrus"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -208,13 +207,6 @@ type ServerAuth struct {
 	//
 	// +optional
 	FailFallBack string `json:"failFallBack,omitempty"`
-}
-
-func (cluster FastDFS) Fields() logrus.Fields {
-	return logrus.Fields{
-		"clusterName": cluster.Name,
-		"namespace":   cluster.Namespace,
-	}
 }
 
 /**

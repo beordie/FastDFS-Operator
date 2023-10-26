@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 
 	v1 "k8s.io/api/admission/v1"
@@ -44,32 +45,28 @@ var _ http.Handler = &Webhook{}
 func (wh *Webhook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var body []byte
 	var err error
-	ctx := r.Context()
-	if wh.WithContextFunc != nil {
-		ctx = wh.WithContextFunc(ctx, r)
-	}
 
 	var reviewResponse Response
-	if r.Body == nil {
+	if r.Body != nil {
+		if body, err = ioutil.ReadAll(r.Body); err != nil {
+			wh.log.Error(err, "unable to read the body from the incoming request")
+			reviewResponse = Errored(http.StatusBadRequest, err)
+			wh.writeResponse(w, reviewResponse)
+			return
+		}
+	} else {
 		err = errors.New("request body is empty")
-		wh.getLogger(nil).Error(err, "bad request")
-		reviewResponse = Errored(http.StatusBadRequest, err)
-		wh.writeResponse(w, reviewResponse)
-		return
-	}
-
-	defer r.Body.Close()
-	if body, err = io.ReadAll(r.Body); err != nil {
-		wh.getLogger(nil).Error(err, "unable to read the body from the incoming request")
+		wh.log.Error(err, "bad request")
 		reviewResponse = Errored(http.StatusBadRequest, err)
 		wh.writeResponse(w, reviewResponse)
 		return
 	}
 
 	// verify the content type is accurate
-	if contentType := r.Header.Get("Content-Type"); contentType != "application/json" {
+	contentType := r.Header.Get("Content-Type")
+	if contentType != "application/json" {
 		err = fmt.Errorf("contentType=%s, expected application/json", contentType)
-		wh.getLogger(nil).Error(err, "unable to process a request with unknown content type")
+		wh.log.Error(err, "unable to process a request with an unknown content type", "content type", contentType)
 		reviewResponse = Errored(http.StatusBadRequest, err)
 		wh.writeResponse(w, reviewResponse)
 		return
@@ -88,14 +85,15 @@ func (wh *Webhook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ar.SetGroupVersionKind(v1.SchemeGroupVersion.WithKind("AdmissionReview"))
 	_, actualAdmRevGVK, err := admissionCodecs.UniversalDeserializer().Decode(body, nil, &ar)
 	if err != nil {
-		wh.getLogger(nil).Error(err, "unable to decode the request")
+		wh.log.Error(err, "unable to decode the request")
 		reviewResponse = Errored(http.StatusBadRequest, err)
 		wh.writeResponse(w, reviewResponse)
 		return
 	}
-	wh.getLogger(&req).V(4).Info("received request")
+	wh.log.V(1).Info("received request", "UID", req.UID, "kind", req.Kind, "resource", req.Resource)
 
-	reviewResponse = wh.Handle(ctx, req)
+	// TODO: add panic-recovery for Handle
+	reviewResponse = wh.Handle(r.Context(), req)
 	wh.writeResponseTyped(w, reviewResponse, actualAdmRevGVK)
 }
 
@@ -123,24 +121,17 @@ func (wh *Webhook) writeResponseTyped(w io.Writer, response Response, admRevGVK 
 
 // writeAdmissionResponse writes ar to w.
 func (wh *Webhook) writeAdmissionResponse(w io.Writer, ar v1.AdmissionReview) {
-	if err := json.NewEncoder(w).Encode(ar); err != nil {
-		wh.getLogger(nil).Error(err, "unable to encode and write the response")
-		// Since the `ar v1.AdmissionReview` is a clear and legal object,
-		// it should not have problem to be marshalled into bytes.
-		// The error here is probably caused by the abnormal HTTP connection,
-		// e.g., broken pipe, so we can only write the error response once,
-		// to avoid endless circular calling.
-		serverError := Errored(http.StatusInternalServerError, err)
-		if err = json.NewEncoder(w).Encode(v1.AdmissionReview{Response: &serverError.AdmissionResponse}); err != nil {
-			wh.getLogger(nil).Error(err, "still unable to encode and write the InternalServerError response")
-		}
+	err := json.NewEncoder(w).Encode(ar)
+	if err != nil {
+		wh.log.Error(err, "unable to encode the response")
+		wh.writeResponse(w, Errored(http.StatusInternalServerError, err))
 	} else {
 		res := ar.Response
-		if log := wh.getLogger(nil); log.V(4).Enabled() {
+		if log := wh.log; log.V(1).Enabled() {
 			if res.Result != nil {
-				log = log.WithValues("code", res.Result.Code, "reason", res.Result.Reason, "message", res.Result.Message)
+				log = log.WithValues("code", res.Result.Code, "reason", res.Result.Reason)
 			}
-			log.V(4).Info("wrote response", "requestID", res.UID, "allowed", res.Allowed)
+			log.V(1).Info("wrote response", "UID", res.UID, "allowed", res.Allowed)
 		}
 	}
 }

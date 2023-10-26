@@ -49,7 +49,6 @@ var _ Predicate = GenerationChangedPredicate{}
 var _ Predicate = AnnotationChangedPredicate{}
 var _ Predicate = or{}
 var _ Predicate = and{}
-var _ Predicate = not{}
 
 // Funcs is a function that implements Predicate.
 type Funcs struct {
@@ -66,7 +65,7 @@ type Funcs struct {
 	GenericFunc func(event.GenericEvent) bool
 }
 
-// Create implements Predicate.
+// Create implements Predicate
 func (p Funcs) Create(e event.CreateEvent) bool {
 	if p.CreateFunc != nil {
 		return p.CreateFunc(e)
@@ -74,7 +73,7 @@ func (p Funcs) Create(e event.CreateEvent) bool {
 	return true
 }
 
-// Delete implements Predicate.
+// Delete implements Predicate
 func (p Funcs) Delete(e event.DeleteEvent) bool {
 	if p.DeleteFunc != nil {
 		return p.DeleteFunc(e)
@@ -82,7 +81,7 @@ func (p Funcs) Delete(e event.DeleteEvent) bool {
 	return true
 }
 
-// Update implements Predicate.
+// Update implements Predicate
 func (p Funcs) Update(e event.UpdateEvent) bool {
 	if p.UpdateFunc != nil {
 		return p.UpdateFunc(e)
@@ -90,7 +89,7 @@ func (p Funcs) Update(e event.UpdateEvent) bool {
 	return true
 }
 
-// Generic implements Predicate.
+// Generic implements Predicate
 func (p Funcs) Generic(e event.GenericEvent) bool {
 	if p.GenericFunc != nil {
 		return p.GenericFunc(e)
@@ -118,12 +117,12 @@ func NewPredicateFuncs(filter func(object client.Object) bool) Funcs {
 	}
 }
 
-// ResourceVersionChangedPredicate implements a default update predicate function on resource version change.
+// ResourceVersionChangedPredicate implements a default update predicate function on resource version change
 type ResourceVersionChangedPredicate struct {
 	Funcs
 }
 
-// Update implements default UpdateEvent filter for validating resource version change.
+// Update implements default UpdateEvent filter for validating resource version change
 func (ResourceVersionChangedPredicate) Update(e event.UpdateEvent) bool {
 	if e.ObjectOld == nil {
 		log.Error(nil, "Update event has no old object to update", "event", e)
@@ -157,7 +156,7 @@ type GenerationChangedPredicate struct {
 	Funcs
 }
 
-// Update implements default UpdateEvent filter for validating generation change.
+// Update implements default UpdateEvent filter for validating generation change
 func (GenerationChangedPredicate) Update(e event.UpdateEvent) bool {
 	if e.ObjectOld == nil {
 		log.Error(nil, "Update event has no old object to update", "event", e)
@@ -176,9 +175,9 @@ func (GenerationChangedPredicate) Update(e event.UpdateEvent) bool {
 // This predicate will skip update events that have no change in the object's annotation.
 // It is intended to be used in conjunction with the GenerationChangedPredicate, as in the following example:
 //
-//	Controller.Watch(
+// Controller.Watch(
 //		&source.Kind{Type: v1.MyCustomKind},
-//		&handler.EnqueueRequestForObject{},
+// 		&handler.EnqueueRequestForObject{},
 //		predicate.Or(predicate.GenerationChangedPredicate{}, predicate.AnnotationChangedPredicate{}))
 //
 // This is mostly useful for controllers that needs to trigger both when the resource's generation is incremented
@@ -187,7 +186,7 @@ type AnnotationChangedPredicate struct {
 	Funcs
 }
 
-// Update implements default UpdateEvent filter for validating annotation change.
+// Update implements default UpdateEvent filter for validating annotation change
 func (AnnotationChangedPredicate) Update(e event.UpdateEvent) bool {
 	if e.ObjectOld == nil {
 		log.Error(nil, "Update event has no old object to update", "event", e)
@@ -199,37 +198,6 @@ func (AnnotationChangedPredicate) Update(e event.UpdateEvent) bool {
 	}
 
 	return !reflect.DeepEqual(e.ObjectNew.GetAnnotations(), e.ObjectOld.GetAnnotations())
-}
-
-// LabelChangedPredicate implements a default update predicate function on label change.
-//
-// This predicate will skip update events that have no change in the object's label.
-// It is intended to be used in conjunction with the GenerationChangedPredicate, as in the following example:
-//
-// Controller.Watch(
-//
-//	&source.Kind{Type: v1.MyCustomKind},
-//	&handler.EnqueueRequestForObject{},
-//	predicate.Or(predicate.GenerationChangedPredicate{}, predicate.LabelChangedPredicate{}))
-//
-// This will be helpful when object's labels is carrying some extra specification information beyond object's spec,
-// and the controller will be triggered if any valid spec change (not only in spec, but also in labels) happens.
-type LabelChangedPredicate struct {
-	Funcs
-}
-
-// Update implements default UpdateEvent filter for checking label change.
-func (LabelChangedPredicate) Update(e event.UpdateEvent) bool {
-	if e.ObjectOld == nil {
-		log.Error(nil, "Update event has no old object to update", "event", e)
-		return false
-	}
-	if e.ObjectNew == nil {
-		log.Error(nil, "Update event has no new object for update", "event", e)
-		return false
-	}
-
-	return !reflect.DeepEqual(e.ObjectNew.GetLabels(), e.ObjectOld.GetLabels())
 }
 
 // And returns a composite predicate that implements a logical AND of the predicates passed to it.
@@ -320,31 +288,6 @@ func (o or) Generic(e event.GenericEvent) bool {
 		}
 	}
 	return false
-}
-
-// Not returns a predicate that implements a logical NOT of the predicate passed to it.
-func Not(predicate Predicate) Predicate {
-	return not{predicate}
-}
-
-type not struct {
-	predicate Predicate
-}
-
-func (n not) Create(e event.CreateEvent) bool {
-	return !n.predicate.Create(e)
-}
-
-func (n not) Update(e event.UpdateEvent) bool {
-	return !n.predicate.Update(e)
-}
-
-func (n not) Delete(e event.DeleteEvent) bool {
-	return !n.predicate.Delete(e)
-}
-
-func (n not) Generic(e event.GenericEvent) bool {
-	return !n.predicate.Generic(e)
 }
 
 // LabelSelectorPredicate constructs a Predicate from a LabelSelector.

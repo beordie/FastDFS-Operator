@@ -19,10 +19,10 @@ package cache
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -45,21 +45,19 @@ func (*ErrCacheNotStarted) Error() string {
 	return "the cache is not started, can not read objects"
 }
 
-// informerCache is a Kubernetes Object cache populated from internal.Informers.
-// informerCache wraps internal.Informers.
+// informerCache is a Kubernetes Object cache populated from InformersMap.  informerCache wraps an InformersMap.
 type informerCache struct {
-	scheme *runtime.Scheme
-	*internal.Informers
+	*internal.InformersMap
 }
 
-// Get implements Reader.
-func (ic *informerCache) Get(ctx context.Context, key client.ObjectKey, out client.Object, opts ...client.GetOption) error {
-	gvk, err := apiutil.GVKForObject(out, ic.scheme)
+// Get implements Reader
+func (ip *informerCache) Get(ctx context.Context, key client.ObjectKey, out client.Object) error {
+	gvk, err := apiutil.GVKForObject(out, ip.Scheme)
 	if err != nil {
 		return err
 	}
 
-	started, cache, err := ic.Informers.Get(ctx, gvk, out)
+	started, cache, err := ip.InformersMap.Get(ctx, gvk, out)
 	if err != nil {
 		return err
 	}
@@ -70,14 +68,15 @@ func (ic *informerCache) Get(ctx context.Context, key client.ObjectKey, out clie
 	return cache.Reader.Get(ctx, key, out)
 }
 
-// List implements Reader.
-func (ic *informerCache) List(ctx context.Context, out client.ObjectList, opts ...client.ListOption) error {
-	gvk, cacheTypeObj, err := ic.objectTypeForListObject(out)
+// List implements Reader
+func (ip *informerCache) List(ctx context.Context, out client.ObjectList, opts ...client.ListOption) error {
+
+	gvk, cacheTypeObj, err := ip.objectTypeForListObject(out)
 	if err != nil {
 		return err
 	}
 
-	started, cache, err := ic.Informers.Get(ctx, *gvk, cacheTypeObj)
+	started, cache, err := ip.InformersMap.Get(ctx, *gvk, cacheTypeObj)
 	if err != nil {
 		return err
 	}
@@ -92,60 +91,68 @@ func (ic *informerCache) List(ctx context.Context, out client.ObjectList, opts .
 // objectTypeForListObject tries to find the runtime.Object and associated GVK
 // for a single object corresponding to the passed-in list type. We need them
 // because they are used as cache map key.
-func (ic *informerCache) objectTypeForListObject(list client.ObjectList) (*schema.GroupVersionKind, runtime.Object, error) {
-	gvk, err := apiutil.GVKForObject(list, ic.scheme)
+func (ip *informerCache) objectTypeForListObject(list client.ObjectList) (*schema.GroupVersionKind, runtime.Object, error) {
+	gvk, err := apiutil.GVKForObject(list, ip.Scheme)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// We need the non-list GVK, so chop off the "List" from the end of the kind.
-	gvk.Kind = strings.TrimSuffix(gvk.Kind, "List")
-
-	// Handle unstructured.UnstructuredList.
-	if _, isUnstructured := list.(runtime.Unstructured); isUnstructured {
+	if !strings.HasSuffix(gvk.Kind, "List") {
+		return nil, nil, fmt.Errorf("non-list type %T (kind %q) passed as output", list, gvk)
+	}
+	// we need the non-list GVK, so chop off the "List" from the end of the kind
+	gvk.Kind = gvk.Kind[:len(gvk.Kind)-4]
+	_, isUnstructured := list.(*unstructured.UnstructuredList)
+	var cacheTypeObj runtime.Object
+	if isUnstructured {
 		u := &unstructured.Unstructured{}
 		u.SetGroupVersionKind(gvk)
-		return &gvk, u, nil
-	}
-	// Handle metav1.PartialObjectMetadataList.
-	if _, isPartialObjectMetadata := list.(*metav1.PartialObjectMetadataList); isPartialObjectMetadata {
-		pom := &metav1.PartialObjectMetadata{}
-		pom.SetGroupVersionKind(gvk)
-		return &gvk, pom, nil
+		cacheTypeObj = u
+	} else {
+		itemsPtr, err := apimeta.GetItemsPtr(list)
+		if err != nil {
+			return nil, nil, err
+		}
+		// http://knowyourmeme.com/memes/this-is-fine
+		elemType := reflect.Indirect(reflect.ValueOf(itemsPtr)).Type().Elem()
+		if elemType.Kind() != reflect.Ptr {
+			elemType = reflect.PtrTo(elemType)
+		}
+
+		cacheTypeValue := reflect.Zero(elemType)
+		var ok bool
+		cacheTypeObj, ok = cacheTypeValue.Interface().(runtime.Object)
+		if !ok {
+			return nil, nil, fmt.Errorf("cannot get cache for %T, its element %T is not a runtime.Object", list, cacheTypeValue.Interface())
+		}
 	}
 
-	// Any other list type should have a corresponding non-list type registered
-	// in the scheme. Use that to create a new instance of the non-list type.
-	cacheTypeObj, err := ic.scheme.New(gvk)
-	if err != nil {
-		return nil, nil, err
-	}
 	return &gvk, cacheTypeObj, nil
 }
 
-// GetInformerForKind returns the informer for the GroupVersionKind.
-func (ic *informerCache) GetInformerForKind(ctx context.Context, gvk schema.GroupVersionKind) (Informer, error) {
+// GetInformerForKind returns the informer for the GroupVersionKind
+func (ip *informerCache) GetInformerForKind(ctx context.Context, gvk schema.GroupVersionKind) (Informer, error) {
 	// Map the gvk to an object
-	obj, err := ic.scheme.New(gvk)
+	obj, err := ip.Scheme.New(gvk)
 	if err != nil {
 		return nil, err
 	}
 
-	_, i, err := ic.Informers.Get(ctx, gvk, obj)
+	_, i, err := ip.InformersMap.Get(ctx, gvk, obj)
 	if err != nil {
 		return nil, err
 	}
 	return i.Informer, err
 }
 
-// GetInformer returns the informer for the obj.
-func (ic *informerCache) GetInformer(ctx context.Context, obj client.Object) (Informer, error) {
-	gvk, err := apiutil.GVKForObject(obj, ic.scheme)
+// GetInformer returns the informer for the obj
+func (ip *informerCache) GetInformer(ctx context.Context, obj client.Object) (Informer, error) {
+	gvk, err := apiutil.GVKForObject(obj, ip.Scheme)
 	if err != nil {
 		return nil, err
 	}
 
-	_, i, err := ic.Informers.Get(ctx, gvk, obj)
+	_, i, err := ip.InformersMap.Get(ctx, gvk, obj)
 	if err != nil {
 		return nil, err
 	}
@@ -153,8 +160,8 @@ func (ic *informerCache) GetInformer(ctx context.Context, obj client.Object) (In
 }
 
 // NeedLeaderElection implements the LeaderElectionRunnable interface
-// to indicate that this can be started without requiring the leader lock.
-func (ic *informerCache) NeedLeaderElection() bool {
+// to indicate that this can be started without requiring the leader lock
+func (ip *informerCache) NeedLeaderElection() bool {
 	return false
 }
 
@@ -163,8 +170,8 @@ func (ic *informerCache) NeedLeaderElection() bool {
 // to List. For one-to-one compatibility with "normal" field selectors, only return one value.
 // The values may be anything.  They will automatically be prefixed with the namespace of the
 // given object, if present.  The objects passed are guaranteed to be objects of the correct type.
-func (ic *informerCache) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
-	informer, err := ic.GetInformer(ctx, obj)
+func (ip *informerCache) IndexField(ctx context.Context, obj client.Object, field string, extractValue client.IndexerFunc) error {
+	informer, err := ip.GetInformer(ctx, obj)
 	if err != nil {
 		return err
 	}
@@ -187,8 +194,8 @@ func indexByField(indexer Informer, field string, extractor client.IndexerFunc) 
 		rawVals := extractor(obj)
 		var vals []string
 		if ns == "" {
-			// if we're not doubling the keys for the namespaced case, just create a new slice with same length
-			vals = make([]string, len(rawVals))
+			// if we're not doubling the keys for the namespaced case, just re-use what was returned to us
+			vals = rawVals
 		} else {
 			// if we need to add non-namespaced versions too, double the length
 			vals = make([]string, len(rawVals)*2)

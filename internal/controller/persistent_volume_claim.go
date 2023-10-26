@@ -25,7 +25,7 @@ func (r *FastDFSReconciler) cleanupPVCs(ctx context.Context, cluster *v1.FastDFS
 	for _, pvcItem := range pvcList.Items {
 		// delete only Orphan PVCs
 		if isPVCOrphan(pvcItem.Name, replicas) {
-			r.Log.WithFields(cluster.Fields()).Info("removing orphan pvc", "pvc", pvcItem)
+			r.Log.Info("removing orphan pvc", "pvc", pvcItem)
 			if err := r.deletePVC(pvcItem); err != nil {
 				return err
 			}

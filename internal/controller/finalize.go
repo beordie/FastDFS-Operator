@@ -13,7 +13,7 @@ func (r *FastDFSReconciler) isPVCBeingDeleted(ctx context.Context, cluster *v1.F
 	var pvcList corev1.PersistentVolumeClaimList
 	pvcList, err = r.getPVCList(ctx, cluster)
 	if err != nil {
-		r.Log.WithFields(cluster.Fields()).Error("Failed to get PVC list")
+		r.Log.Info("Failed to get PVC list")
 		return false, err
 	}
 	for _, pvcItem := range pvcList.Items {
