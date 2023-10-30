@@ -1,13 +1,18 @@
 package controller
 
 import (
+	"context"
 	v1 "fastdfs_operator/api/v1"
 	"fmt"
+
+	"fastdfs_operator/pkg/utils"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 func (r *FastDFSReconciler) makeStatefulSet(cluster *v1.FastDFS) *appsv1.StatefulSet {
@@ -47,5 +52,169 @@ func (r *FastDFSReconciler) mutateStatefulSet(cluster *v1.FastDFS, sts *appsv1.S
 		}
 		pvc.Spec.StorageClassName = cluster.Spec.Storage.StorageClass
 	}
-	return nil
+	sts.Spec.Replicas = cluster.NextReplicas()
+	sts.Spec.UpdateStrategy = appsv1.StatefulSetUpdateStrategy{Type: appsv1.RollingUpdateStatefulSetStrategyType}
+	// Template
+	sts.Spec.Template.Labels = cluster.ResourceLabels()
+	annotations, err := r.makePodAnnotations(cluster)
+	if err != nil {
+		return err
+	}
+	sts.Spec.Template.Annotations = annotations
+	sts.Spec.Template.Spec.ImagePullSecrets = utils.GetReferencesFromStringSlice(cluster.Spec.Pod.ImagePullSecrets)
+	if sts.Spec.Template.Spec.Affinity == nil {
+		sts.Spec.Template.Spec.Affinity = r.makePodAffinity(cluster)
+	}
+
+	sts.Spec.Template.Spec.Tolerations = cluster.Spec.Tolerations
+	sts.Spec.Template.Spec.NodeSelector = cluster.Spec.NodeSelector
+
+	// Template.Spec.Volumes
+	if sts.Spec.Template.Spec.Volumes == nil || len(sts.Spec.Template.Spec.Volumes) == 0 {
+		sts.Spec.Template.Spec.Volumes = []corev1.Volume{{}}
+	}
+	volume := &sts.Spec.Template.Spec.Volumes[0]
+	volume.Name = v1.ConfigVolumeName
+
+	if volume.VolumeSource.ConfigMap == nil {
+		volume.VolumeSource.ConfigMap = &corev1.ConfigMapVolumeSource{}
+	}
+	volume.VolumeSource.ConfigMap.LocalObjectReference = corev1.LocalObjectReference{Name: cluster.GetConfigMapName()}
+
+	sts.Spec.Template.Spec.Containers = r.makePodImage(cluster)
+	return controllerutil.SetControllerReference(cluster, sts, r.Scheme)
+}
+
+func (r *FastDFSReconciler) makePodAnnotations(cluster *v1.FastDFS) (map[string]string, error) {
+	annotations := map[string]string{}
+	if cluster.Spec.Pod.Annotations != nil {
+		for k, v := range cluster.Spec.Pod.Annotations {
+			annotations[k] = v
+		}
+	}
+
+	cm := &corev1.ConfigMap{}
+	if err := r.Client.Get(context.TODO(), cluster.GetConfigMapNamespacedName(), cm); err != nil {
+		return nil, err
+	}
+
+	return annotations, nil
+}
+
+func (r *FastDFSReconciler) makePodAffinity(cluster *v1.FastDFS) *corev1.Affinity {
+	if cluster.IgnoreSchedulePolicy() {
+		return nil
+	}
+
+	affinity := &corev1.Affinity{}
+	if cluster.Spec.Affinity != nil {
+		affinity = cluster.Spec.Affinity.DeepCopy()
+	}
+
+	makePodAntiAffinity(cluster, affinity)
+	makePodNodeAffinity(cluster, affinity)
+	return affinity
+}
+
+func makePodAntiAffinity(cluster *v1.FastDFS, affinity *corev1.Affinity) {
+	if affinity.PodAntiAffinity != nil {
+		return
+	}
+
+	affinity.PodAntiAffinity = &corev1.PodAntiAffinity{
+		RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
+			{
+				LabelSelector: &metav1.LabelSelector{
+					MatchLabels: cluster.ResourceLabels(),
+				},
+				TopologyKey: corev1.LabelHostname,
+			},
+		},
+	}
+}
+
+func makePodNodeAffinity(cluster *v1.FastDFS, affinity *corev1.Affinity) {
+	if len(cluster.Spec.AvailableZones) == 0 {
+		return
+	}
+
+	if affinity.NodeAffinity == nil {
+		affinity.NodeAffinity = &corev1.NodeAffinity{}
+	}
+	if affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution = &corev1.NodeSelector{}
+	}
+
+	terms := []corev1.NodeSelectorTerm{}
+	if affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms != nil {
+		terms = affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+	} else {
+		terms = append(terms, corev1.NodeSelectorTerm{})
+	}
+	for i := range terms {
+		terms[i].MatchExpressions = append(terms[i].MatchExpressions, corev1.NodeSelectorRequirement{
+			Key:      v1.TopologyKey,
+			Operator: corev1.NodeSelectorOpIn,
+			Values:   cluster.Spec.AvailableZones,
+		})
+	}
+	affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms = terms
+}
+
+func (r *FastDFSReconciler) makePodImage(cluster *v1.FastDFS) []corev1.Container {
+	imagePullRepository := cluster.Spec.Pod.ImagePullRepository
+
+	pod := cluster.Spec.Pod
+	containers := []corev1.Container{}
+	for i, _ := range pod.Images {
+		container := corev1.Container{}
+		image := pod.Images[i]
+		container.Name = image.Name
+		container.ImagePullPolicy = pod.ImagePullPolicy
+		container.Image = imagePullRepository + "/" + image.Name + ":" + image.Version
+		container.Resources = pod.Resources
+		container.Ports = makePodPorts(image.Name)
+		container.LivenessProbe = &corev1.Probe{
+			Handler: corev1.Handler{
+				TCPSocket: &corev1.TCPSocketAction{
+					Port: intstr.FromInt(int(getContainerPort(image.Name))),
+				},
+			},
+			InitialDelaySeconds: 20,
+			PeriodSeconds:       5,
+			FailureThreshold:    3,
+			SuccessThreshold:    1,
+			TimeoutSeconds:      30,
+		}
+		container.VolumeMounts = []corev1.VolumeMount{
+			{
+				Name:      v1.PvcName,
+				MountPath: v1.DataDir,
+			},
+		}
+		containers = append(containers, container)
+	}
+
+	return containers
+}
+
+func makePodPorts(name string) []corev1.ContainerPort {
+	return []corev1.ContainerPort{
+		{
+			Name:          name,
+			Protocol:      corev1.ProtocolTCP,
+			ContainerPort: getContainerPort(name),
+		},
+	}
+}
+
+func getContainerPort(name string) int32 {
+	var port int32
+	switch name {
+	case v1.StorageContainerName:
+		port = v1.DefaultStoragePort
+	case v1.TrackerContainerName:
+		port = v1.DefaultTrackerPort
+	}
+	return port
 }

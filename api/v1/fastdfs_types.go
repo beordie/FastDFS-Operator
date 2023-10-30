@@ -56,22 +56,6 @@ type FastDFSSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	ParticipantReplicas *int32 `json:"participantReplicas,omitempty"`
 
-	// ClientPort is the port of FastDFS client service
-	// Cannot be updated.
-	//
-	// +optional
-	// +kubebuilder:validation:Maximum=65535
-	// +kubebuilder:validation:Minimum=0
-	ClientPort int32 `json:"clientPort,omitempty"`
-
-	// MetricsPort is the http port of FastDFS prometheus metrics, default 8080
-	// Cannot be updated.
-	//
-	// +optional
-	// +kubebuilder:validation:Maximum=65535
-	// +kubebuilder:validation:Minimum=0
-	MetricsPort int32 `json:"metricsPort,omitempty"`
-
 	// Paused specified whether cluster service continue to serve
 	//
 	// +optional
@@ -108,6 +92,11 @@ type FastDFSSpec struct {
 	//
 	// +optional
 	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
+
+	// AvailableZones specified the available zone pod can be scheduled
+	//
+	// +optional
+	AvailableZones []string `json:"availableZones,omitempty"`
 }
 
 // FastDFSStatus defines the observed state of FastDFS
@@ -130,6 +119,9 @@ type FastDFSStatus struct {
 
 	// ParticipantReplicas is the number of participant replicas created in the cluster
 	ParticipantReplicas int32 `json:"participantReplicas"`
+
+	// ReadyReplicas is the number of ready replicas in the cluster that are ready
+	ReadyReplicas int32 `json:"readyReplicas"`
 }
 
 //+kubebuilder:object:root=true
@@ -181,6 +173,23 @@ type PodOption struct {
 	//
 	// +optional
 	Resources corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// tracker & storage image
+	//
+	// +optional
+	Images []Image `json:"images,omitempty"`
+}
+
+type Image struct {
+	// container image name
+	//
+	// +optional
+	Name string `json:"name,omitempty"`
+
+	//container image version
+	//
+	// +optional
+	Version string `json:"version,omitempty"`
 }
 
 type ServerAuth struct {
@@ -268,6 +277,21 @@ func (cluster *FastDFS) GetHeadlessServiceName() string {
 	return fmt.Sprintf(HeadlessServiceName, cluster.Name)
 }
 
+func (cluster *FastDFS) GetConfigMapName() string {
+	return fmt.Sprintf(ConfigMapName, cluster.Name)
+}
+
+func (cluster *FastDFS) GetConfigMapNamespacedName() types.NamespacedName {
+	return types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.GetConfigMapName()}
+}
+
+func (cluster *FastDFS) IgnoreSchedulePolicy() bool {
+	if cluster.Annotations != nil && cluster.Annotations[ScheduleTypeAnnotation] == ScheduleTypeAnnotationValueIgnore {
+		return true
+	}
+	return false
+}
+
 type VolumeReclaimPolicy string
 
 const (
@@ -301,6 +325,22 @@ type StorageOption struct {
 	// +optional
 	// +kubebuilder:validation:Enum="Delete";"Retain"
 	VolumeReclaimPolicy VolumeReclaimPolicy `json:"reclaimPolicy,omitempty"`
+}
+
+func (cluster *FastDFS) NextReplicas() *int32 {
+	nextReplicas := cluster.Status.CurrentStatefulSetReplicas
+
+	if cluster.Status.CurrentStatefulSetReplicas < *cluster.Spec.Replicas {
+		// when scale up, make sure previous replica be ready
+		if cluster.Status.ReadyReplicas == cluster.Status.CurrentStatefulSetReplicas {
+			nextReplicas = cluster.Status.ReadyReplicas + 1
+		}
+	} else if cluster.Status.CurrentStatefulSetReplicas > *cluster.Spec.Replicas {
+		// when scale down, scale immediately
+		nextReplicas = *cluster.Spec.Replicas
+	}
+
+	return &nextReplicas
 }
 
 func init() {
