@@ -10,6 +10,25 @@ metadata:
   name: fastdfs-sample
 spec:
   # TODO(user): Add fields here
-  version: 2.1.1
+  replicas: 1
+  version: 2.11.0
   labels:
     cloud.netease.com/app: fastdfs
+  pod:
+    imagePullPolicy: IfNotPresent
+    imagePullRepository: hub.docker.com/morunchang
+    image:
+      name: fastdfs
+      version: latest
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 100Mi
+  storage:
+    diskSize: 8
+    reclaimPolicy: Delete
+    storageClass: localstorage-class
+    unit: Gi

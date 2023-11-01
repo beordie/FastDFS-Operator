@@ -177,7 +177,7 @@ type PodOption struct {
 	// tracker & storage image
 	//
 	// +optional
-	Images []Image `json:"images,omitempty"`
+	Image Image `json:"image,omitempty"`
 }
 
 type Image struct {

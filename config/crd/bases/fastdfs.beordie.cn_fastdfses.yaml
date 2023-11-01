@@ -626,26 +626,18 @@ spec:
                         type: array
                     type: object
                 type: object
-              clientPort:
-                description: ClientPort is the port of FastDFS client service Cannot
-                  be updated.
-                format: int32
-                maximum: 65535
-                minimum: 0
-                type: integer
+              availableZones:
+                description: AvailableZones specified the available zone pod can be
+                  scheduled
+                items:
+                  type: string
+                type: array
               labels:
                 additionalProperties:
                   type: string
                 description: Labels specifies the labels that will be tagged on all
                   resources created by FastDFSCluster
                 type: object
-              metricsPort:
-                description: MetricsPort is the http port of FastDFS prometheus metrics,
-                  default 8080 Cannot be updated.
-                format: int32
-                maximum: 65535
-                minimum: 0
-                type: integer
               nodeSelector:
                 additionalProperties:
                   type: string
@@ -669,6 +661,16 @@ spec:
                       type: string
                     description: Annotations specifies the annotations to attach to
                       pods the operator creates for the FastDFS cluster.
+                    type: object
+                  image:
+                    description: tracker & storage image
+                    properties:
+                      name:
+                        description: container image name
+                        type: string
+                      version:
+                        description: container image version
+                        type: string
                     type: object
                   imagePullPolicy:
                     description: ImagePullPolicy describes a policy for if/when to
@@ -836,6 +838,11 @@ spec:
                   created in the cluster
                 format: int32
                 type: integer
+              readyReplicas:
+                description: ReadyReplicas is the number of ready replicas in the
+                  cluster that are ready
+                format: int32
+                type: integer
               replicas:
                 description: Replicas is the number of replicas created in the cluster
                 format: int32
@@ -844,6 +851,7 @@ spec:
             - currentStatefulSetReplicas
             - observerReplicas
             - participantReplicas
+            - readyReplicas
             - replicas
             type: object
         type: object

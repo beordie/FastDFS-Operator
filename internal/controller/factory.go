@@ -166,35 +166,31 @@ func (r *FastDFSReconciler) makePodImage(cluster *v1.FastDFS) []corev1.Container
 
 	pod := cluster.Spec.Pod
 	containers := []corev1.Container{}
-	for i, _ := range pod.Images {
-		container := corev1.Container{}
-		image := pod.Images[i]
-		container.Name = image.Name
-		container.ImagePullPolicy = pod.ImagePullPolicy
-		container.Image = imagePullRepository + "/" + image.Name + ":" + image.Version
-		container.Resources = pod.Resources
-		container.Ports = makePodPorts(image.Name)
-		container.LivenessProbe = &corev1.Probe{
-			Handler: corev1.Handler{
-				TCPSocket: &corev1.TCPSocketAction{
-					Port: intstr.FromInt(int(getContainerPort(image.Name))),
-				},
+	container := corev1.Container{}
+	container.Name = pod.Image.Name
+	container.ImagePullPolicy = pod.ImagePullPolicy
+	container.Image = imagePullRepository + "/" + pod.Image.Name + ":" + pod.Image.Version
+	container.Resources = pod.Resources
+	container.Ports = makePodPorts(pod.Image.Name)
+	container.LivenessProbe = &corev1.Probe{
+		Handler: corev1.Handler{
+			TCPSocket: &corev1.TCPSocketAction{
+				Port: intstr.FromInt(int(getContainerPort(pod.Image.Name))),
 			},
-			InitialDelaySeconds: 20,
-			PeriodSeconds:       5,
-			FailureThreshold:    3,
-			SuccessThreshold:    1,
-			TimeoutSeconds:      30,
-		}
-		container.VolumeMounts = []corev1.VolumeMount{
-			{
-				Name:      v1.PvcName,
-				MountPath: v1.DataDir,
-			},
-		}
-		containers = append(containers, container)
+		},
+		InitialDelaySeconds: 20,
+		PeriodSeconds:       5,
+		FailureThreshold:    3,
+		SuccessThreshold:    1,
+		TimeoutSeconds:      30,
 	}
-
+	container.VolumeMounts = []corev1.VolumeMount{
+		{
+			Name:      v1.PvcName,
+			MountPath: v1.DataDir,
+		},
+	}
+	containers = append(containers, container)
 	return containers
 }
 
