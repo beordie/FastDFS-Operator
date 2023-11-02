@@ -91,9 +91,10 @@ func main() {
 	}
 
 	if err = (&controller.FastDFSReconciler{
-		Client: mgr.GetClient(),
-		Log:    ctrl.Log.WithName("controllers"),
-		Scheme: mgr.GetScheme(),
+		Client:   mgr.GetClient(),
+		Log:      ctrl.Log.WithName("controllers"),
+		Recorder: mgr.GetEventRecorderFor("ZookeeperCluster"),
+		Scheme:   mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "FastDFS")
 		os.Exit(1)

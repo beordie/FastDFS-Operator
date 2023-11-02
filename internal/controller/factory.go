@@ -74,7 +74,7 @@ func (r *FastDFSReconciler) mutateStatefulSet(cluster *v1.FastDFS, sts *appsv1.S
 		sts.Spec.Template.Spec.Volumes = []corev1.Volume{{}}
 	}
 	volume := &sts.Spec.Template.Spec.Volumes[0]
-	volume.Name = v1.ConfigVolumeName
+	volume.Name = v1.PvcName
 
 	if volume.VolumeSource.ConfigMap == nil {
 		volume.VolumeSource.ConfigMap = &corev1.ConfigMapVolumeSource{}
@@ -175,7 +175,7 @@ func (r *FastDFSReconciler) makePodImage(cluster *v1.FastDFS) []corev1.Container
 	container.LivenessProbe = &corev1.Probe{
 		Handler: corev1.Handler{
 			TCPSocket: &corev1.TCPSocketAction{
-				Port: intstr.FromInt(int(getContainerPort(pod.Image.Name))),
+				Port: intstr.FromInt(8888),
 			},
 		},
 		InitialDelaySeconds: 20,
@@ -199,18 +199,25 @@ func makePodPorts(name string) []corev1.ContainerPort {
 		{
 			Name:          name,
 			Protocol:      corev1.ProtocolTCP,
-			ContainerPort: getContainerPort(name),
+			ContainerPort: 8888,
 		},
 	}
 }
 
-func getContainerPort(name string) int32 {
-	var port int32
-	switch name {
-	case v1.StorageContainerName:
-		port = v1.DefaultStoragePort
-	case v1.TrackerContainerName:
-		port = v1.DefaultTrackerPort
+func makeConfigmap(cluster *v1.FastDFS) *corev1.ConfigMap {
+	nn := cluster.GetConfigMapNamespacedName()
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      nn.Name,
+			Namespace: nn.Namespace,
+		},
 	}
-	return port
+}
+
+func (r *FastDFSReconciler) mutateConfigmap(cluster *v1.FastDFS, cm *corev1.ConfigMap) error {
+	cm.Labels = cluster.ResourceLabels()
+	var cd ConfigMap = make(map[string]string)
+
+	cm.Data = cd
+	return controllerutil.SetControllerReference(cluster, cm, r.Scheme)
 }

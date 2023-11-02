@@ -5,7 +5,7 @@ const (
 	ConfigMapName        = "%s-configmap"
 	HeadlessServiceName  = "%s-headless-service"
 	StorageValueUnit     = "%d%s"
-	ConfigVolumeName     = "zookeeper-config"
+	ConfigVolumeName     = "config"
 	StorageContainerName = "storage"
 	TrackerContainerName = "tracker"
 	PvcName              = "fastdfs-storage-data"
