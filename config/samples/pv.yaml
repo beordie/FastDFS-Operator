@@ -11,4 +11,12 @@ spec:
   persistentVolumeReclaimPolicy: Delete
   storageClassName: local-storage
   local:
-    path: /data/k8s 
+    path: /data/k8s
+  nodeAffinity: # 这里就设置了节点亲和
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: pvc
+              operator: In
+              values:
+                - local

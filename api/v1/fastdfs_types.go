@@ -285,6 +285,18 @@ func (cluster *FastDFS) GetConfigMapNamespacedName() types.NamespacedName {
 	return types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.GetConfigMapName()}
 }
 
+func (cluster *FastDFS) GetPersistentVolumeClaimName(ordinal int) string {
+	return fmt.Sprintf("%s-%s", PvcName, cluster.GetPodName(int32(ordinal)))
+}
+
+func (cluster *FastDFS) GetPersistentVolumeClaimNamespacedName(ordinal int) types.NamespacedName {
+	return types.NamespacedName{Namespace: cluster.Namespace, Name: cluster.GetPersistentVolumeClaimName(ordinal)}
+}
+
+func (cluster *FastDFS) GetPodName(ordinal int32) string {
+	return fmt.Sprintf("%s-%d", cluster.GetStatefulSetName(), ordinal)
+}
+
 func (cluster *FastDFS) IgnoreSchedulePolicy() bool {
 	if cluster.Annotations != nil && cluster.Annotations[ScheduleTypeAnnotation] == ScheduleTypeAnnotationValueIgnore {
 		return true

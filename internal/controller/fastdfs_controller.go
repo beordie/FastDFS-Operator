@@ -49,6 +49,7 @@ func (r *FastDFSReconciler) GetReconcileSteps() []reconcile.Func {
 	return reconcile.Funcs{
 		r.ReconcileConfig,
 		r.ReconcileStatefulSet,
+		r.ReconcilePersistentVolumeClaim,
 	}
 }
 
