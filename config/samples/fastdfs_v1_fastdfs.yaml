@@ -17,7 +17,7 @@ spec:
     cloud.netease.com/app: fastdfs
   pod:
     imagePullPolicy: IfNotPresent
-    imagePullRepository: hub.docker.com/morunchang
+    imagePullRepository: luhuiguo
     image:
       name: fastdfs
       version: latest

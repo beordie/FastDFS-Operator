@@ -171,6 +171,7 @@ func (r *FastDFSReconciler) makePodImage(cluster *v1.FastDFS) []corev1.Container
 	container.ImagePullPolicy = pod.ImagePullPolicy
 	container.Image = imagePullRepository + "/" + pod.Image.Name + ":" + pod.Image.Version
 	container.Resources = pod.Resources
+	container.Command = []string{"/usr/bin/start.sh", "tracker"}
 	container.Ports = makePodPorts(pod.Image.Name)
 	container.LivenessProbe = &corev1.Probe{
 		Handler: corev1.Handler{
